@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Radno vreme – parser (real-time)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --accent:#22c55e; --warn:#f59e0b; --danger:#ef4444; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:#e5e7eb;height:100vh;display:flex}
+    .col{flex:1;padding:16px;overflow:auto}
+    .left{background:#0b1220}
+    .right{background:#0c1425;border-left:1px solid #1f2937}
+    h1{font-size:18px;margin:0 0 12px}
+    textarea{width:100%;min-height:70vh;background:var(--card);color:#e5e7eb;border:1px solid #374151;border-radius:10px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+    .pill{background:#0b1020;border:1px solid #1f2937;border-radius:999px;padding:8px 12px;color:#cbd5e1}
+    .pill small{display:block;color:var(--muted);font-size:11px;line-height:1}
+    .pill strong{display:block;font-size:16px;line-height:1.2;margin-top:2px}
+    table{width:100%;border-collapse:collapse;background:var(--card);border-radius:10px;overflow:hidden}
+    th,td{padding:10px;border-bottom:1px solid #1f2937;font-size:14px}
+    th{color:#cbd5e1;text-align:left;background:#0e1a2f;position:sticky;top:0}
+    tr:last-child td{border-bottom:none}
+    .ok{color:var(--accent)} .warn{color:var(--warn)} .bad{color:var(--danger)}
+    .muted{color:var(--muted)}
+    .cfg{background:#0b1020;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:12px}
+    .section{background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;margin-bottom:12px}
+    .summaryList {margin:0; padding-left:16px}
+    .summaryList li {margin:6px 0}
+    code.kv {background:#0e1628;padding:2px 6px;border-radius:6px;border:1px solid #334155}
+  </style>
+</head>
+<body>
+  <div class="col left">
+    <h1>Ulazni log (paste)</h1>
+    <div class="cfg"></div>
+
+    <textarea id="inputBox" spellcheck="false" placeholder="Nalepi WTIS log ovde"></textarea>
+    <p class="muted">Format: tip (Entry/Exit), lokacija, vreme <code>YYYY-MM-DD HH:MM</code> ili <code>HH:MM:SS</code>. Razdvajanje tabovima ili 2+ razmaka.</p>
+  </div>
+
+  <div class="col right">
+    <h1>Rezultati</h1>
+
+    <div class="section">
+      <h2 style="margin:0 0 8px;font-size:16px">Dnevni sažetak</h2>
+      <ul class="summaryList" id="dailySummary"></ul>
+    </div>
+
+    <div class="row" id="summaryRow"></div>
+
+    <table id="intervalsTbl">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Od (Entry)</th>
+          <th>Do (Exit / sada)</th>
+          <th>Trajanje</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p id="notes" class="muted" style="margin-top:10px"></p>
+  </div>
+
+  <script>
+    const inputEl   = document.getElementById('inputBox');
+    const tblBody   = document.querySelector('#intervalsTbl tbody');
+    const sumRow    = document.getElementById('summaryRow');
+    const notesEl   = document.getElementById('notes');
+    const dailySummaryEl = document.getElementById('dailySummary');
+
+    inputEl.addEventListener('input', render);
+
+    function parseTimestamp(tsRaw){
+      const ts = (tsRaw || '').trim().replace(/\s+/, 'T');
+      const d = new Date(ts);
+      return isFinite(d) ? d : null;
+    }
+    function hhmmss(totalMs){
+      const sign = totalMs < 0 ? '-' : '';
+      let s = Math.floor(Math.abs(totalMs)/1000);
+      const h = Math.floor(s/3600); s%=3600;
+      const m = Math.floor(s/60); s%=60;
+      const pad = n => String(n).padStart(2,'0');
+      return `${sign}${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+    function hhmm(totalMs){
+      const sign = totalMs < 0 ? '-' : '';
+      let s = Math.floor(Math.abs(totalMs)/1000);
+      const h = Math.floor(s/3600); s%=3600;
+      const m = Math.floor(s/60);
+      const pad = n => String(n).padStart(2,'0');
+      return `${sign}${pad(h)}:${pad(m)}`;
+    }
+    function sumMs(arr){ return arr.reduce((a,b)=>a+b,0); }
+
+    function formatDT(d){ return d ? d.toLocaleString() : '—'; }
+    function formatTimeOnly(d){
+      if (!d) return '—';
+      const h = String(d.getHours()).padStart(2,'0');
+      const m = String(d.getMinutes()).padStart(2,'0');
+      return `${h}:${m}`;
+    }
+
+    function parseRows(raw){
+      return raw.split(/\r?\n/)
+        .map(l=>l.trim())
+        .filter(Boolean)
+        .map(line=>{
+          const parts = line.split(/\t+| {2,}/);
+          const type  = (parts[0]||'').trim();
+          const ts    = parts[2] ? parts[2].trim() : (parts[1]||'').trim();
+          const date  = parseTimestamp(ts);
+          return { type, date, parts, raw: line };
+        })
+        .filter(r=>r.type && r.date);
+    }
+
+    function compute(raw){
+      let rows = parseRows(raw);
+      rows.sort((a,b)=>a.date - b.date);
+
+      // da li se računa dalje?
+      let openUntilNow = true;
+      if (rows.length){
+        const last = rows[rows.length-1];
+        const isExit = last.type.toLowerCase().startsWith('exit');
+        const p3 = (last.parts[last.parts.length-2] || '').trim().toLowerCase();
+        const p4 = (last.parts[last.parts.length-1] || '').trim().toLowerCase();
+        if (isExit && p3 === 'yes' && p4 === 'yes'){
+          openUntilNow = false;
+        }
+      }
+
+      let intervals = [];
+      let currentEntry = null;
+      let warnings = [];
+
+      for(const r of rows){
+        const t = r.type.toLowerCase();
+        if(t.startsWith('entry')){
+          if(currentEntry){
+            warnings.push('Dupli Entry – prethodni interval zatvoren u vreme novog Entry-ja.');
+            intervals.push({start: currentEntry.date, end: r.date, open:false});
+          }
+          currentEntry = { date: r.date };
+        } else if(t.startsWith('exit')){
+          if(currentEntry){
+            intervals.push({start: currentEntry.date, end: r.date, open:false});
+            currentEntry = null;
+          } else {
+            warnings.push('Exit bez prethodnog Entry-ja – preskačem ovaj Exit.');
+          }
+        }
+      }
+
+      const nowRef = new Date();
+      const lastLogTime = rows.length ? rows[rows.length-1].date : nowRef;
+      if(currentEntry){
+        intervals.push({
+          start: currentEntry.date,
+          end: (openUntilNow ? nowRef : lastLogTime),
+          open: openUntilNow
+        });
+      }
+
+      const durations = intervals.map(x => Math.max(0, x.end - x.start));
+      const totalWorkMs = sumMs(durations);
+
+      let firstEntryTime = intervals.length ? intervals[0].start : null;
+      let lastTime       = intervals.length ? intervals[intervals.length-1].end : null;
+
+      let totalBreakMs = 0;
+      for(let i=0;i<intervals.length-1;i++){
+        const gap = intervals[i+1].start - intervals[i].end;
+        if(gap > 0) totalBreakMs += gap;
+      }
+
+      const hasBreak   = totalBreakMs > 0;
+      const targetMs   = (hasBreak ? 7.5 : 8.0) * 3600 * 1000;
+      const remainMs   = Math.max(0, targetMs - totalWorkMs);
+      const overtimeMs = Math.max(0, totalWorkMs - targetMs);
+      const timeInOfficeMs = (firstEntryTime && lastTime) ? Math.max(0, lastTime - firstEntryTime) : 0;
+
+      let predictedEnd = null;
+      if (remainMs > 0 && (intervals.at(-1)?.open)){
+        const ref = openUntilNow ? new Date() : lastLogTime;
+        predictedEnd = new Date(ref.getTime() + remainMs);
+      }
+
+      return {
+        intervals, warnings, totalWorkMs, totalBreakMs, hasBreak,
+        targetMs, remainMs, overtimeMs, firstEntryTime, lastTime,
+        timeInOfficeMs, predictedEnd
+      };
+    }
+
+    function render(){
+      const raw = inputEl.value || '';
+      const R = compute(raw);
+
+      sumRow.innerHTML = '';
+      const pills = [
+        {label:'Ukupno odrađeno', value: hhmmss(R.totalWorkMs), cls: R.overtimeMs>0?'ok':''},
+        {label:'Ukupno pauza', value: hhmmss(R.totalBreakMs), cls:''},
+        {label: R.remainMs>0?'Preostalo do cilja':'Preko cilja', value: R.remainMs>0?hhmmss(R.remainMs):hhmmss(R.overtimeMs), cls: R.remainMs>0?'warn':'ok'}
+      ];
+      for(const p of pills){
+        const div = document.createElement('div');
+        div.className = 'pill ' + (p.cls||'');
+        div.innerHTML = `<small>${p.label}</small><strong>${p.value}</strong>`;
+        sumRow.appendChild(div);
+      }
+
+      const endLabel = (R.overtimeMs > 0) ? 'Prekovremeno:' : 'Predviđeni kraj radnog vremena:';
+      const endValue = (R.overtimeMs > 0)
+        ? hhmm(R.overtimeMs)
+        : (R.predictedEnd ? formatTimeOnly(R.predictedEnd) : '—');
+
+      dailySummaryEl.innerHTML = `
+        <li><strong>Početak radnog vremena:</strong> <code class="kv">${formatTimeOnly(R.firstEntryTime)}</code></li>
+        <li><strong>Trajanje pauze:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code> <span class="muted">(${R.hasBreak ? 'cilj 7:30' : 'cilj 8:00'})</span></li>
+        <li><strong>${endLabel}</strong> <code class="kv">${endValue}</code></li>
+        <li><strong>Vreme provedeno u firmi:</strong> <code class="kv">${hhmm(R.timeInOfficeMs)}</code></li>
+      `;
+
+      tblBody.innerHTML = '';
+      R.intervals.forEach((iv, idx)=>{
+        const tr = document.createElement('tr');
+        const status = iv.open ? '<span class="warn">otvoren</span>' : '<span class="ok">zatvoren</span>';
+        tr.innerHTML = `
+          <td>${idx+1}</td>
+          <td>${formatDT(iv.start)}</td>
+          <td>${formatDT(iv.end)}</td>
+          <td>${hhmmss(Math.max(0, iv.end - iv.start))}</td>
+          <td>${status}</td>
+        `;
+        tblBody.appendChild(tr);
+      });
+
+      notesEl.textContent = R.warnings.join(' ') || 'OK.';
+    }
+
+    render();
+    setInterval(render, 1000);
+  </script>
+</body>
+</html>
