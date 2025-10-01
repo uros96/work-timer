@@ -11,9 +11,10 @@
     .col{flex:1;padding:16px;overflow:auto}
     .left{background:#0b1220}
     .right{background:#0c1425;border-left:1px solid #1f2937}
-    h1{font-size:18px;margin:0 0 12px}
+    h1{font-size:18px;margin:0 0 8px}
+    /* textarea block starts right under the heading */
     textarea{width:100%;min-height:70vh;background:var(--card);color:#e5e7eb;border:1px solid #374151;border-radius:10px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
     .pill{background:#0b1020;border:1px solid #1f2937;border-radius:999px;padding:8px 12px;color:#cbd5e1}
     .pill small{display:block;color:#94a3b8;font-size:11px;line-height:1}
     .pill strong{display:block;font-size:16px;line-height:1.2;margin-top:2px}
@@ -23,8 +24,8 @@
     tr:last-child td{border-bottom:none}
     .ok{color:var(--accent)} .warn{color:var(--warn)} .bad{color:var(--danger)}
     .muted{color:#94a3b8}
-    .cfg{background:#0b1020;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:12px}
-    .section{background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;margin-bottom:12px}
+    /* removed the empty .cfg block entirely */
+    .section{background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;margin:0 0 12px}
     .summaryList {margin:0; padding-left:16px}
     .summaryList li {margin:6px 0}
     code.kv {background:#0e1628;padding:2px 6px;border-radius:6px;border:1px solid #334155}
@@ -33,18 +34,15 @@
 <body>
   <div class="col left">
     <h1>Input log (paste)</h1>
-    <div class="cfg"></div>
-
     <textarea id="inputBox" spellcheck="false" placeholder="Paste WTIS log here"></textarea>
-    <p class="muted">
-      Format: type (<code>Entry</code>/<code>Exit</code>), location, timestamp
-      <code>YYYY-MM-DD HH:MM</code> or <code>HH:MM:SS</code>. Columns may be separated by tabs or 2+ spaces.
-    </p>
+    <p class="muted">Format: type (<code>Entry</code>/<code>Exit</code>), location, timestamp
+      <code>YYYY-MM-DD HH:MM</code> or <code>HH:MM:SS</code>. Columns may be separated by tabs or 2+ spaces.</p>
   </div>
 
   <div class="col right">
     <h1>Results</h1>
 
+    <!-- starts directly under the heading to align with the textarea on the left -->
     <div class="section">
       <h2 style="margin:0 0 8px;font-size:16px">Daily summary</h2>
       <ul class="summaryList" id="dailySummary"></ul>
@@ -125,8 +123,7 @@
       let rows = parseRows(raw);
       rows.sort((a,b)=>a.date - b.date);
 
-      // Decide if an open session keeps ticking:
-      // If the last row is Exit and its last two fields are 'Yes' 'Yes', treat as closed (no ticking).
+      // open ticking unless last row is Exit with last two fields 'Yes Yes'
       let openUntilNow = true;
       if (rows.length){
         const last = rows[rows.length-1];
@@ -138,7 +135,7 @@
         }
       }
 
-      // Pair Entry/Exit
+      // pair intervals
       let intervals = [];
       let currentEntry = null;
       let warnings = [];
@@ -171,29 +168,28 @@
         });
       }
 
+      // totals
       const durations = intervals.map(x => Math.max(0, x.end - x.start));
       const totalWorkMs = sumMs(durations);
 
-      let firstEntryTime = intervals.length ? intervals[0].start : null;
-      let lastTime       = intervals.length ? intervals[intervals.length-1].end : null;
+      const firstEntryTime = intervals.length ? intervals[0].start : null;
+      const lastTime       = intervals.length ? intervals[intervals.length-1].end : null;
 
-      // Breaks = gaps between consecutive intervals
+      // breaks between intervals
       let totalBreakMs = 0;
       for(let i=0;i<intervals.length-1;i++){
         const gap = intervals[i+1].start - intervals[i].end;
         if(gap > 0) totalBreakMs += gap;
       }
 
-      // Daily target: 8h if no break, 7h30 if there is a break
+      // daily target: 8h (no break) vs 7h30 (with break)
       const hasBreak   = totalBreakMs > 0;
       const targetMs   = (hasBreak ? 7.5 : 8.0) * 3600 * 1000;
 
       const remainMs   = Math.max(0, targetMs - totalWorkMs);
       const overtimeMs = Math.max(0, totalWorkMs - targetMs);
 
-      const timeInOfficeMs = (firstEntryTime && lastTime) ? Math.max(0, lastTime - firstEntryTime) : 0;
-
-      // Predicted finish time (only if not yet reached target and session is open)
+      // predicted finish (only if not yet at target and session is open)
       let predictedEnd = null;
       if (remainMs > 0 && (intervals.at(-1)?.open)){
         const ref = openUntilNow ? new Date() : lastLogTime;
@@ -203,7 +199,7 @@
       return {
         intervals, warnings, totalWorkMs, totalBreakMs, hasBreak,
         targetMs, remainMs, overtimeMs, firstEntryTime, lastTime,
-        timeInOfficeMs, predictedEnd
+        predictedEnd
       };
     }
 
@@ -225,7 +221,7 @@
         sumRow.appendChild(div);
       }
 
-      // Daily summary (time-only, 24h)
+      // Daily summary: ONLY Start, Break, and Finish/Overtime (no "time on site", no "target")
       const endLabel = (R.overtimeMs > 0) ? 'Overtime:' : 'Finish time:';
       const endValue = (R.overtimeMs > 0)
         ? hhmm(R.overtimeMs)
@@ -233,12 +229,11 @@
 
       dailySummaryEl.innerHTML = `
         <li><strong>Start time:</strong> <code class="kv">${formatTimeOnly(R.firstEntryTime)}</code></li>
-        <li><strong>Break duration:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code> <span class="muted">(${R.hasBreak ? 'target 7:30' : 'target 8:00'})</span></li>
+        <li><strong>Break duration:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code></li>
         <li><strong>${endLabel}</strong> <code class="kv">${endValue}</code></li>
-        <li><strong>Time on site:</strong> <code class="kv">${hhmm(R.timeInOfficeMs)}</code></li>
       `;
 
-      // Intervals table (keeps full datetime for clarity)
+      // Intervals table
       tblBody.innerHTML = '';
       R.intervals.forEach((iv, idx)=>{
         const tr = document.createElement('tr');
@@ -256,6 +251,7 @@
       notesEl.textContent = R.warnings.join(' ') || 'OK.';
     }
 
+    // initial + real-time render
     render();
     setInterval(render, 1000);
   </script>
