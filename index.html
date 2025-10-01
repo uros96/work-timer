@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="sr">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Radno vreme – parser (real-time)</title>
+  <title>Working Time – WTIS Parser (real-time)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --accent:#22c55e; --warn:#f59e0b; --danger:#ef4444; }
@@ -15,14 +15,14 @@
     textarea{width:100%;min-height:70vh;background:var(--card);color:#e5e7eb;border:1px solid #374151;border-radius:10px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .row{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 12px}
     .pill{background:#0b1020;border:1px solid #1f2937;border-radius:999px;padding:8px 12px;color:#cbd5e1}
-    .pill small{display:block;color:var(--muted);font-size:11px;line-height:1}
+    .pill small{display:block;color:#94a3b8;font-size:11px;line-height:1}
     .pill strong{display:block;font-size:16px;line-height:1.2;margin-top:2px}
     table{width:100%;border-collapse:collapse;background:var(--card);border-radius:10px;overflow:hidden}
     th,td{padding:10px;border-bottom:1px solid #1f2937;font-size:14px}
     th{color:#cbd5e1;text-align:left;background:#0e1a2f;position:sticky;top:0}
     tr:last-child td{border-bottom:none}
     .ok{color:var(--accent)} .warn{color:var(--warn)} .bad{color:var(--danger)}
-    .muted{color:var(--muted)}
+    .muted{color:#94a3b8}
     .cfg{background:#0b1020;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:12px}
     .section{background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;margin-bottom:12px}
     .summaryList {margin:0; padding-left:16px}
@@ -32,18 +32,21 @@
 </head>
 <body>
   <div class="col left">
-    <h1>Ulazni log (paste)</h1>
+    <h1>Input log (paste)</h1>
     <div class="cfg"></div>
 
-    <textarea id="inputBox" spellcheck="false" placeholder="Nalepi WTIS log ovde"></textarea>
-    <p class="muted">Format: tip (Entry/Exit), lokacija, vreme <code>YYYY-MM-DD HH:MM</code> ili <code>HH:MM:SS</code>. Razdvajanje tabovima ili 2+ razmaka.</p>
+    <textarea id="inputBox" spellcheck="false" placeholder="Paste WTIS log here"></textarea>
+    <p class="muted">
+      Format: type (<code>Entry</code>/<code>Exit</code>), location, timestamp
+      <code>YYYY-MM-DD HH:MM</code> or <code>HH:MM:SS</code>. Columns may be separated by tabs or 2+ spaces.
+    </p>
   </div>
 
   <div class="col right">
-    <h1>Rezultati</h1>
+    <h1>Results</h1>
 
     <div class="section">
-      <h2 style="margin:0 0 8px;font-size:16px">Dnevni sažetak</h2>
+      <h2 style="margin:0 0 8px;font-size:16px">Daily summary</h2>
       <ul class="summaryList" id="dailySummary"></ul>
     </div>
 
@@ -53,9 +56,9 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>Od (Entry)</th>
-          <th>Do (Exit / sada)</th>
-          <th>Trajanje</th>
+          <th>From (Entry)</th>
+          <th>To (Exit / now)</th>
+          <th>Duration</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -96,7 +99,7 @@
     }
     function sumMs(arr){ return arr.reduce((a,b)=>a+b,0); }
 
-    function formatDT(d){ return d ? d.toLocaleString() : '—'; }
+    function formatDT(d){ return d ? d.toLocaleString() : '—'; } // for table
     function formatTimeOnly(d){
       if (!d) return '—';
       const h = String(d.getHours()).padStart(2,'0');
@@ -122,7 +125,8 @@
       let rows = parseRows(raw);
       rows.sort((a,b)=>a.date - b.date);
 
-      // da li se računa dalje?
+      // Decide if an open session keeps ticking:
+      // If the last row is Exit and its last two fields are 'Yes' 'Yes', treat as closed (no ticking).
       let openUntilNow = true;
       if (rows.length){
         const last = rows[rows.length-1];
@@ -134,6 +138,7 @@
         }
       }
 
+      // Pair Entry/Exit
       let intervals = [];
       let currentEntry = null;
       let warnings = [];
@@ -142,7 +147,7 @@
         const t = r.type.toLowerCase();
         if(t.startsWith('entry')){
           if(currentEntry){
-            warnings.push('Dupli Entry – prethodni interval zatvoren u vreme novog Entry-ja.');
+            warnings.push('Duplicate Entry – previous interval closed at the next Entry.');
             intervals.push({start: currentEntry.date, end: r.date, open:false});
           }
           currentEntry = { date: r.date };
@@ -151,7 +156,7 @@
             intervals.push({start: currentEntry.date, end: r.date, open:false});
             currentEntry = null;
           } else {
-            warnings.push('Exit bez prethodnog Entry-ja – preskačem ovaj Exit.');
+            warnings.push('Exit without a prior Entry – skipping this Exit.');
           }
         }
       }
@@ -172,18 +177,23 @@
       let firstEntryTime = intervals.length ? intervals[0].start : null;
       let lastTime       = intervals.length ? intervals[intervals.length-1].end : null;
 
+      // Breaks = gaps between consecutive intervals
       let totalBreakMs = 0;
       for(let i=0;i<intervals.length-1;i++){
         const gap = intervals[i+1].start - intervals[i].end;
         if(gap > 0) totalBreakMs += gap;
       }
 
+      // Daily target: 8h if no break, 7h30 if there is a break
       const hasBreak   = totalBreakMs > 0;
       const targetMs   = (hasBreak ? 7.5 : 8.0) * 3600 * 1000;
+
       const remainMs   = Math.max(0, targetMs - totalWorkMs);
       const overtimeMs = Math.max(0, totalWorkMs - targetMs);
+
       const timeInOfficeMs = (firstEntryTime && lastTime) ? Math.max(0, lastTime - firstEntryTime) : 0;
 
+      // Predicted finish time (only if not yet reached target and session is open)
       let predictedEnd = null;
       if (remainMs > 0 && (intervals.at(-1)?.open)){
         const ref = openUntilNow ? new Date() : lastLogTime;
@@ -201,11 +211,12 @@
       const raw = inputEl.value || '';
       const R = compute(raw);
 
+      // KPI cards
       sumRow.innerHTML = '';
       const pills = [
-        {label:'Ukupno odrađeno', value: hhmmss(R.totalWorkMs), cls: R.overtimeMs>0?'ok':''},
-        {label:'Ukupno pauza', value: hhmmss(R.totalBreakMs), cls:''},
-        {label: R.remainMs>0?'Preostalo do cilja':'Preko cilja', value: R.remainMs>0?hhmmss(R.remainMs):hhmmss(R.overtimeMs), cls: R.remainMs>0?'warn':'ok'}
+        {label:'Total worked', value: hhmmss(R.totalWorkMs), cls: R.overtimeMs>0?'ok':''},
+        {label:'Total break', value: hhmmss(R.totalBreakMs), cls:''},
+        {label: R.remainMs>0?'Remaining to target':'Over target', value: R.remainMs>0?hhmmss(R.remainMs):hhmmss(R.overtimeMs), cls: R.remainMs>0?'warn':'ok'}
       ];
       for(const p of pills){
         const div = document.createElement('div');
@@ -214,22 +225,24 @@
         sumRow.appendChild(div);
       }
 
-      const endLabel = (R.overtimeMs > 0) ? 'Prekovremeno:' : 'Predviđeni kraj radnog vremena:';
+      // Daily summary (time-only, 24h)
+      const endLabel = (R.overtimeMs > 0) ? 'Overtime:' : 'Finish time:';
       const endValue = (R.overtimeMs > 0)
         ? hhmm(R.overtimeMs)
         : (R.predictedEnd ? formatTimeOnly(R.predictedEnd) : '—');
 
       dailySummaryEl.innerHTML = `
-        <li><strong>Početak radnog vremena:</strong> <code class="kv">${formatTimeOnly(R.firstEntryTime)}</code></li>
-        <li><strong>Trajanje pauze:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code> <span class="muted">(${R.hasBreak ? 'cilj 7:30' : 'cilj 8:00'})</span></li>
+        <li><strong>Start time:</strong> <code class="kv">${formatTimeOnly(R.firstEntryTime)}</code></li>
+        <li><strong>Break duration:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code> <span class="muted">(${R.hasBreak ? 'target 7:30' : 'target 8:00'})</span></li>
         <li><strong>${endLabel}</strong> <code class="kv">${endValue}</code></li>
-        <li><strong>Vreme provedeno u firmi:</strong> <code class="kv">${hhmm(R.timeInOfficeMs)}</code></li>
+        <li><strong>Time on site:</strong> <code class="kv">${hhmm(R.timeInOfficeMs)}</code></li>
       `;
 
+      // Intervals table (keeps full datetime for clarity)
       tblBody.innerHTML = '';
       R.intervals.forEach((iv, idx)=>{
         const tr = document.createElement('tr');
-        const status = iv.open ? '<span class="warn">otvoren</span>' : '<span class="ok">zatvoren</span>';
+        const status = iv.open ? '<span class="warn">open</span>' : '<span class="ok">closed</span>';
         tr.innerHTML = `
           <td>${idx+1}</td>
           <td>${formatDT(iv.start)}</td>
