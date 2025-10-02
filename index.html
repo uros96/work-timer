@@ -12,7 +12,6 @@
     .left{background:#0b1220}
     .right{background:#0c1425;border-left:1px solid #1f2937}
     h1{font-size:18px;margin:0 0 8px}
-    /* textarea block starts right under the heading */
     textarea{width:100%;min-height:70vh;background:var(--card);color:#e5e7eb;border:1px solid #374151;border-radius:10px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
     .pill{background:#0b1020;border:1px solid #1f2937;border-radius:999px;padding:8px 12px;color:#cbd5e1}
@@ -24,7 +23,6 @@
     tr:last-child td{border-bottom:none}
     .ok{color:var(--accent)} .warn{color:var(--warn)} .bad{color:var(--danger)}
     .muted{color:#94a3b8}
-    /* removed the empty .cfg block entirely */
     .section{background:#0b1020;border:1px solid #1f2937;border-radius:12px;padding:12px;margin:0 0 12px}
     .summaryList {margin:0; padding-left:16px}
     .summaryList li {margin:6px 0}
@@ -42,7 +40,6 @@
   <div class="col right">
     <h1>Results</h1>
 
-    <!-- starts directly under the heading to align with the textarea on the left -->
     <div class="section">
       <h2 style="margin:0 0 8px;font-size:16px">Daily summary</h2>
       <ul class="summaryList" id="dailySummary"></ul>
@@ -87,22 +84,15 @@
       const pad = n => String(n).padStart(2,'0');
       return `${sign}${pad(h)}:${pad(m)}:${pad(s)}`;
     }
-    function hhmm(totalMs){
-      const sign = totalMs < 0 ? '-' : '';
-      let s = Math.floor(Math.abs(totalMs)/1000);
-      const h = Math.floor(s/3600); s%=3600;
-      const m = Math.floor(s/60);
-      const pad = n => String(n).padStart(2,'0');
-      return `${sign}${pad(h)}:${pad(m)}`;
-    }
     function sumMs(arr){ return arr.reduce((a,b)=>a+b,0); }
 
-    function formatDT(d){ return d ? d.toLocaleString() : '—'; } // for table
+    function formatDT(d){ return d ? d.toLocaleString() : '—'; } // for table (kept with date)
     function formatTimeOnly(d){
       if (!d) return '—';
       const h = String(d.getHours()).padStart(2,'0');
       const m = String(d.getMinutes()).padStart(2,'0');
-      return `${h}:${m}`;
+      const s = String(d.getSeconds()).padStart(2,'0');
+      return `${h}:${m}:${s}`; // 24h HH:MM:SS
     }
 
     function parseRows(raw){
@@ -221,19 +211,19 @@
         sumRow.appendChild(div);
       }
 
-      // Daily summary: ONLY Start, Break, and Finish/Overtime (no "time on site", no "target")
+      // Daily summary: 24h times with seconds (HH:MM:SS)
       const endLabel = (R.overtimeMs > 0) ? 'Overtime:' : 'Finish time:';
       const endValue = (R.overtimeMs > 0)
-        ? hhmm(R.overtimeMs)
-        : (R.predictedEnd ? formatTimeOnly(R.predictedEnd) : '—');
+        ? hhmmss(R.overtimeMs)                 // duration
+        : (R.predictedEnd ? formatTimeOnly(R.predictedEnd) : '—'); // time-of-day
 
       dailySummaryEl.innerHTML = `
         <li><strong>Start time:</strong> <code class="kv">${formatTimeOnly(R.firstEntryTime)}</code></li>
-        <li><strong>Break duration:</strong> <code class="kv">${hhmm(R.totalBreakMs)}</code></li>
+        <li><strong>Break duration:</strong> <code class="kv">${hhmmss(R.totalBreakMs)}</code></li>
         <li><strong>${endLabel}</strong> <code class="kv">${endValue}</code></li>
       `;
 
-      // Intervals table
+      // Intervals table (kept with full datetimes)
       tblBody.innerHTML = '';
       R.intervals.forEach((iv, idx)=>{
         const tr = document.createElement('tr');
