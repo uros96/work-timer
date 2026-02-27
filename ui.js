@@ -36,10 +36,13 @@ export function renderDailySummary(listEl, result) {
   const endLabel = result.overtimeMs > 0 ? 'Overtime:' : 'Finish time:';
   const endValue = result.overtimeMs > 0 ? hhmmss(result.overtimeMs) : result.predictedEnd ? formatTimeOnly(result.predictedEnd) : '—';
 
+  const totalWorkedHours = parseFloat((result.totalWorkMs / 3600000).toFixed(2));
+
   listEl.innerHTML = `
     <li><strong>Start time:</strong> <code class="kv">${formatTimeOnly(result.firstEntryTime)}</code></li>
     <li><strong>Break duration:</strong> <code class="kv">${hhmmss(result.totalBreakMs)}</code></li>
     <li><strong>${endLabel}</strong> <code class="kv">${endValue}</code></li>
+    <li><strong>Total time:</strong> <code class="kv">${totalWorkedHours}h</code></li>
   `;
 }
 
